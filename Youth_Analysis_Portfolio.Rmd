@@ -1,0 +1,445 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-04-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load Packages
+library(dplyr)
+library(randomForest)
+library(tree)
+library(caret)
+library(tidyr)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(forcats)
+```
+
+```{r}
+# Read in Data
+load("youth_data.Rdata")
+```
+
+```{r}
+# Clean data
+df_cleaned <- df %>% 
+  select(-IRSMKLSS30N, -iralcfm, -irsmklsstry, -alcmdays, -eduskpcom, -mrjydays, -mrjmdays, -cigmdays, -smklsmdays, -iralcage, -ircigage, -irmjage, -iralcage, -ircigfm, -irmjfm, -frdmjmon, -prmjmo, -PRPKCIG2, -PRALDLY2, -YFLADLY2, -FRDMEVR2 ) %>% 
+  filter(!(EDUSCHGRD2 %in% c(9, 10,11))) %>% 
+  mutate(eduschlgo = as.character(eduschlgo),
+         eduschlgo = as.factor(if_else(eduschlgo %in% c("11", "85", "94", "97", "98"), NA, eduschlgo)),
+         EDUSCHGRD2 = as.character(EDUSCHGRD2),
+         EDUSCHGRD2 = as.factor(if_else(EDUSCHGRD2 %in% c("98", "99"), NA, EDUSCHGRD2)),
+         alcydays = as.factor(if_else(alcydays == 5, NA, alcydays)),
+         irmjfy = if_else(irmjfy == 991, NA, irmjfy),
+         irmjfy = if_else(irmjfy == 993, 0, irmjfy),
+         iralcfy = if_else(iralcfy == 993, 0, iralcfy),
+         iralcfy = if_else(iralcfy == 991, NA, iralcfy))
+
+```
+
+# Binary Class
+
+# Dataset with cleaned labels
+
+```{r}
+df_cleaned_labs <- df_cleaned %>% 
+  mutate(mrjflag = fct_recode(mrjflag, 
+                              "Never Used" = "0",
+                              "Have Used" = "1"),
+         alcflag = fct_recode(alcflag,
+                              "Never Used Alc" = "0",
+                              "Have Used Alc" = "1"),
+         stndalc = fct_recode(stndalc,
+                             "Most/All" = "1",
+                             "None/Few" = "2"),
+         NEWRACE2 = fct_recode(NEWRACE2,
+                               "White" = "1",
+                               "Black/Afr Am" = "2",
+                               "Native AM/AK Native" = "3",
+                               "Asian" = "5",
+                               "NonHisp more than one" = "6",
+                               "Hispanic" = "7"),
+         tobflag = fct_recode(tobflag,
+                              "Never Used" = "0",
+                              "Have Used" = "1")) %>% 
+  rename("Marijuana Use" = "mrjflag",
+         "Alcohol Use" = "alcflag",
+         "Youth Feels:Peers Using Marijuana" = "yflmjmo",
+         "Students in Grade Using Alcohol" = "stndalc",
+         "Race" = "NEWRACE2",
+         "Tobacco Use" = "tobflag",
+         "Students in Grade Using Marijuan" = "stndsmj",
+         "Students in Grade Getting Drunk Once a Week" = "stnddnk",
+         "Studens in Grade Smoking Cigarettes" = "stndscig",
+         "Youth Selling Drugs" = "YOSELL2",
+         "Youth Feels: Peers Trying Marijuana" = "YFLTMRJ2",
+         "Youth Feels: Peer Trying Cigarettes" = "YFLPKCG2",
+         "Youth Thinks: Parents Feel About Marijuana" = "PRMJEVR2")
+```
+
+```{r}
+# Create a training set with labels
+set.seed(200)
+
+# Number of rows for the training set
+train_size <- floor(.8 * nrow(df_cleaned_labs))
+# Randomly select rows for training set
+train_index <- sample(1:nrow(df_cleaned_labs), train_size)
+
+train.alcohol <- df_cleaned_labs[train_index, ]
+test.alcohol <- df_cleaned_labs[-train_index,]
+```
+
+```{r}
+set.seed(100)
+
+tree.bin <- rpart(`Alcohol Use` ~. - alcydays -iralcfy, data= train.alcohol, method = "class")
+
+tree.cv <- prune(tree.bin, cp = tree.bin$cptable[which.min(tree.bin$cptable[, "xerror"]), "CP"])
+
+rpart.plot(tree.cv)
+
+tree.importance <- data.frame(imp = tree.cv$variable.importance)
+
+df2 <- tree.importance %>% 
+  tibble::rownames_to_column() %>% 
+  dplyr::rename("variable" = rowname) %>% 
+  dplyr::arrange(imp) %>%
+  dplyr::mutate(variable = forcats::fct_inorder(variable))
+ggplot2::ggplot(df2) +
+  geom_bar(aes(x = variable, y = imp),
+           stat = "identity", fill = "grey", color = "black", show.legend = FALSE) +
+  coord_flip() +
+  theme_bw()
+
+tree.bin
+```
+```{r}
+# Confusion Matrix
+
+pred.bin <- predict(tree.bin, test.alcohol, type = "class")
+confus_bin <- table(pred.bin, test.alcohol$`Alcohol Use`)
+confus_bin
+1 - sum(diag(confus_bin)) / sum(confus_bin)
+```
+
+# Multiclass
+# discretized
+```{r}
+df_cleaned <- df %>% 
+  select(-iralcfy, -irmjfy, -ircigfm, -IRSMKLSS30N, -iralcfm, -irmjfm, -ircigage, -iralcage, -irmjage, -irsmklsstry, - alcmdays, -alcflag, -eduskpcom, -mrjmdays, -PRPKCIG2, -prmjmo, -PRALDLY2, -YFLPKCG2, -yflmjmo, -YFLADLY2, -FRDPCIG2, FRDMEVR2, -frdmjmon,-FRDADLY2 ) %>% 
+  filter(!(EDUSCHGRD2 %in% c(9, 10,11))) %>% 
+  mutate(eduschlgo = as.character(eduschlgo),
+         eduschlgo = as.factor(if_else(eduschlgo %in% c("11", "85", "94", "97", "98"), NA, eduschlgo)),
+         EDUSCHGRD2 = as.character(EDUSCHGRD2),
+         EDUSCHGRD2 = as.factor(if_else(EDUSCHGRD2 %in% c("98", "99"), NA, EDUSCHGRD2)),
+         mrjydays = as.factor(mrjydays),
+         cigmdays = as.factor(cigmdays),
+         smklsmdays = as.factor(smklsmdays),
+         alcydays  = as.character(alcydays),
+         alcydays = as.factor(if_else(alcydays == 5, NA, alcydays)))
+```
+
+
+```{r}
+df_rf <- df_cleaned %>% 
+  filter(!is.na(alcydays)) 
+
+# Create a training for rf
+set.seed(200)
+
+# Number of rows for the training set
+train_size <- floor(.8 * nrow(df_rf))
+# Randomly select rows for training set
+train_index <- sample(1:nrow(df_rf), train_size)
+
+train.alcohol <- df_rf[train_index, ]
+test.alcohol <- df_rf[-train_index,]
+```
+
+
+```{r}
+mtry_values <- seq(1, 65, by = 2)
+rf_models <- list()  
+
+for (i in mtry_values) {
+
+  rf_model <- randomForest(alcydays ~ .,
+                           data = train.alcohol,
+                           ntree = 500,
+                           mtry = i,
+                           na.action = na.exclude)
+  
+  rf_models[[paste0("mtry_", i)]] <- rf_model  # Store the model in the list with a unique name
+}
+
+for (model_name in names(rf_models)) {
+  cat("Random Forest Model:", model_name, "\n")
+  print(rf_models[[model_name]])
+  cat("\n")
+}
+set.seed(150)
+final_rf_model <- randomForest(alcydays ~ .,
+                           data = train.alcohol,
+                           ntree = 500,
+                           mtry = 13,
+                           na.action = na.exclude, 
+                           importance = T)
+
+final_rf_model
+```
+
+```{r}
+var_importance1 <- varImp(final_rf_model)
+varImpPlot(final_rf_model, n.var = 10)
+```
+
+```{r}
+pred.rf <- predict(final_rf_model, test.alcohol, type = "class")
+confus_rf <- table(pred.rf, test.alcohol$alcydays)
+confus_rf
+1 - sum(diag(confus_rf)) / sum(confus_rf)
+```
+
+# Continuous
+
+```{r}
+df_cleaned <- df %>% 
+  select(irmjfy, ircigfm)
+df_cleaned <- df %>% 
+  select(-IRSMKLSS30N, -iralcfm, -irsmklsstry, -alcmdays, -eduskpcom, -mrjydays, -mrjmdays, -cigmdays, -smklsmdays, -iralcage, -ircigage, -irmjage, -iralcage, -iralcfy) %>% 
+  filter(!(EDUSCHGRD2 %in% c(9, 10,11))) %>% 
+  mutate(eduschlgo = as.character(eduschlgo),
+         eduschlgo = as.factor(if_else(eduschlgo %in% c("11", "85", "94", "97", "98"), NA, eduschlgo)),
+         EDUSCHGRD2 = as.character(EDUSCHGRD2),
+         EDUSCHGRD2 = as.factor(if_else(EDUSCHGRD2 %in% c("98", "99"), NA, EDUSCHGRD2)),
+         alcydays = as.factor(if_else(alcydays == 5, NA, alcydays)),
+         irmjfy = if_else(irmjfy == 991, NA, irmjfy),
+         irmjfy = if_else(irmjfy == 993, 0, irmjfy),
+         ircigfm =if_else(ircigfm == 93, 0, ircigfm) ,
+         ircigfm =if_else(ircigfm == 91, NA, ircigfm),
+         irmjfm = if_else(irmjfm == 91, NA, irmjfm) ,
+         irmjfm = if_else(irmjfm == 93, 0, irmjfm))
+```
+
+```{r}
+df_rf <- df_cleaned %>% 
+  filter(!is.na(alcydays))  
+
+# Create a training for rf
+set.seed(200)
+
+# Number of rows for the training set
+train_size <- floor(.8 * nrow(df_rf))
+# Randomly select rows for training set
+train_index <- sample(1:nrow(df_rf), train_size)
+
+train.alcohol <- df_rf[train_index, ]
+test.alcohol <- df_rf[-train_index,]
+```
+
+```{r}
+mtry_values <- seq(1, 65, by = 2)
+rf_models <- list()  
+
+for (i in mtry_values) {
+
+  rf_model <- randomForest(alcydays ~ .,
+                           data = train.alcohol,
+                           ntree = 500,
+                           mtry = i,
+                           na.action = na.exclude)
+  
+  rf_models[[paste0("mtry_", i)]] <- rf_model  # Store the model in the list with a unique name
+}
+
+for (model_name in names(rf_models)) {
+  cat("Random Forest Model:", model_name, "\n")
+  print(rf_models[[model_name]])
+  cat("\n")
+}
+
+final_rf_model <- randomForest(alcydays ~ .,
+                           data = train.alcohol,
+                           ntree = 500,
+                           mtry = 7,
+                           na.action = na.exclude, 
+                           importance = T)
+
+final_rf_model
+```
+```{r}
+pred.rf <- predict(final_rf_model, test.alcohol, type = "class")
+confus_rf <- table(pred.rf, test.alcohol$alcydays)
+confus_rf
+1 - sum(diag(confus_rf)) / sum(confus_rf)
+```
+# Boosting 
+
+```{r}
+# Clean data
+df_cleaned <- df %>% 
+  select(-IRSMKLSS30N, -iralcfm, -irsmklsstry, -alcmdays, -eduskpcom, -mrjydays, -mrjmdays, -cigmdays, -smklsmdays, -iralcage, -ircigage, -irmjage, -iralcage, -alcflag) %>% 
+  filter(!(EDUSCHGRD2 %in% c(9, 10,11))) %>% 
+  mutate(eduschlgo = as.character(eduschlgo),
+         eduschlgo = as.factor(if_else(eduschlgo %in% c("11", "85", "94", "97", "98"), NA, eduschlgo)),
+         EDUSCHGRD2 = as.character(EDUSCHGRD2),
+         EDUSCHGRD2 = as.factor(if_else(EDUSCHGRD2 %in% c("98", "99"), NA, EDUSCHGRD2)),
+         alcydays = as.factor(if_else(alcydays == 5, NA, alcydays)),
+         irmjfy = if_else(irmjfy == 991, NA, irmjfy),
+         irmjfy = if_else(irmjfy == 993, 0, irmjfy),
+         ircigfm =if_else(ircigfm == 93, 0, ircigfm) ,
+         ircigfm =if_else(ircigfm == 91, NA, ircigfm),
+         irmjfm = if_else(irmjfm == 91, NA, irmjfm) ,
+         irmjfm = if_else(irmjfm == 93, 0, irmjfm) ,
+         iralcfy = if_else(iralcfy == 993, 0, iralcfy),
+         iralcfy = if_else(iralcfy == 991, NA, iralcfy))
+```
+
+
+```{r}
+df_cleaned <- df_cleaned %>% 
+  filter(!is.na(iralcfy)) 
+
+# Create a training for rf
+set.seed(200)
+
+# Number of rows for the training set
+train_size <- floor(.8 * nrow(df_cleaned))
+# Randomly select rows for training set
+train_index <- sample(1:nrow(df_cleaned), train_size)
+
+train.alcohol <- df_cleaned[train_index, ]
+test.alcohol <- df_cleaned[-train_index,]
+```
+
+```{r}
+library(gbm)
+set.seed(200)
+
+num_range <- seq(0, .8, by = .1)
+mse_vals = c()
+for (num in num_range){
+  boost.alc <- gbm(iralcfy ~ ., data = train.alcohol,
+                   distribution = "gaussian", n.trees = 1000,
+                   interaction.depth = 5, shrinkage = num
+                   )
+  alc.yhat <- predict(boost.alc, newdata = train.alcohol)
+  mse_val <- mean((alc.yhat - train.alcohol$iralcfy)^2)
+  mse_vals=c(mse_vals, mse_val)
+}
+
+plot = data.frame(num_range, mse_vals)
+
+ggplot(plot, aes(x = num_range, y = mse_vals))+
+  geom_point() +
+  geom_text(aes(label = paste("(", round(num_range, 2), ", ", round(mse_vals, 3), ")", sep = "")),
+            vjust = -1, size = 3)+
+  labs(x="Shrinkage Values",
+       y = "MSE")
+```
+
+```{r}
+boost_final <- gbm(iralcfy ~ . -alcydays, data = train.alcohol,
+                   distribution = "gaussian", n.trees = 1000,
+                   interaction.depth = 5, shrinkage = .4
+                   )
+
+boost_final
+alc.trainyhat <- predict(boost_final, newdata = train.alcohol)
+mean((alc.trainyhat - train.alcohol$iralcfy)^2)
+alc.yhat <- predict(boost_final, newdata = test.alcohol)
+mean((alc.yhat - test.alcohol$iralcfy)^2)
+var_importance <- summary(boost_final)
+```
+```{r}
+top_15_vars <- head(var_importance, 15)
+ggplot2::ggplot(top_15_vars) +
+  geom_bar(aes(x = rel.inf, y = var),
+           stat = "identity", fill = "grey", color = "black", show.legend = FALSE) +
+  theme_bw()+
+  labs(x = "Relative Importance",
+       y = "Variable")
+```
+```{r}
+yhat.boost <- predict(boost_final,
+    newdata = test.alcohol, n.trees = 1000)
+mean((yhat.boost - test.alcohol$iralcfy)^2)
+```
+
+```{r}
+df_cleaned <- df %>% 
+  select( -irmjfy, -ircigfm, -IRSMKLSS30N, -iralcfm, -irmjfm, -ircigage, -iralcage, -irmjage, -irsmklsstry, - alcmdays, -alcflag, -eduskpcom) %>% 
+  filter(!(EDUSCHGRD2 %in% c(9, 10,11))) %>% 
+  mutate(eduschlgo = as.character(eduschlgo),
+         eduschlgo = as.factor(if_else(eduschlgo %in% c("11", "85", "94", "97", "98"), NA, eduschlgo)),
+         EDUSCHGRD2 = as.character(EDUSCHGRD2),
+         EDUSCHGRD2 = as.factor(if_else(EDUSCHGRD2 %in% c("98", "99"), NA, EDUSCHGRD2)),
+         mrjydays = as.factor(mrjydays),
+         mrjmdays = as.factor(mrjmdays),
+         cigmdays = as.factor(cigmdays),
+         smklsmdays = as.factor(smklsmdays),
+         alcydays  = as.character(alcydays),
+         alcydays = as.factor(if_else(alcydays == 5, NA, alcydays)),
+         iralcfy = if_else(iralcfy == 993, 0, iralcfy),
+         iralcfy = if_else(iralcfy == 991, NA, iralcfy)) %>% 
+  filter(!is.na(iralcfy))
+
+
+
+
+# Create a training for rf
+set.seed(200)
+
+# Number of rows for the training set
+train_size <- floor(.8 * nrow(df_cleaned))
+# Randomly select rows for training set
+train_index <- sample(1:nrow(df_cleaned), train_size)
+
+train.alcohol <- df_cleaned[train_index, ]
+test.alcohol <- df_cleaned[-train_index,]
+
+num_range <- seq(0, .8, by = .1)
+mse_vals = c()
+for (num in num_range){
+  boost.alc <- gbm(iralcfy ~ ., data = train.alcohol,
+                   distribution = "gaussian", n.trees = 1000,
+                   interaction.depth = 5, shrinkage = num
+                   )
+  alc.yhat <- predict(boost.alc, newdata = train.alcohol)
+  mse_val <- mean((alc.yhat - train.alcohol$iralcfy)^2)
+  mse_vals=c(mse_vals, mse_val)
+}
+
+plot = data.frame(num_range, mse_vals)
+
+ggplot(plot, aes(x = num_range, y = mse_vals))+
+  geom_point() +
+  geom_text(aes(label = paste("(", round(num_range, 2), ", ", round(mse_vals, 3), ")", sep = "")),
+            vjust = -1, size = 3)+
+  labs(x="Shrinkage Values",
+       y = "MSE")
+
+
+boost_final <- gbm(iralcfy ~ . -alcydays, data = train.alcohol,
+                   distribution = "gaussian", n.trees = 1000,
+                   interaction.depth = 5, shrinkage = .6
+                   )
+
+boost_final
+alc.trainyhat <- predict(boost_final, newdata = train.alcohol)
+mean((alc.trainyhat - train.alcohol$iralcfy)^2)
+alc.yhat <- predict(boost_final, newdata = test.alcohol)
+mean((alc.yhat - test.alcohol$iralcfy)^2)
+var_importance <- summary(boost_final)
+```
+
+
+
+
